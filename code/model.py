@@ -2,14 +2,8 @@
 # Licensed under the MIT License.
 import torch
 import torch.nn as nn
-import torch
-from torch.autograd import Variable
-import copy
-import torch.nn.functional as F
-from torch.nn import CrossEntropyLoss, MSELoss
-from modelGNN_updates import *
+from modelGNN_updates import ReGGNN, ReGCN, GGGNN, build_graph, build_graph_text
 from utils import preprocess_features, preprocess_adj
-from utils import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -25,7 +19,7 @@ class Model(nn.Module):
     def forward(self, input_ids=None,labels=None): 
         outputs=self.encoder(input_ids,attention_mask=input_ids.ne(1))[0]
         logits=outputs
-        prob=F.sigmoid(logits)
+        prob=torch.sigmoid(logits)
         if labels is not None:
             labels=labels.float()
             loss=torch.log(prob[:,0]+1e-10)*labels+torch.log((1-prob)[:,0]+1e-10)*(1-labels)
@@ -97,7 +91,7 @@ class GNNReGVD(nn.Module):
         # run over GNNs
         outputs = self.gnn(adj_feature.to(device).double(), adj.to(device).double(), adj_mask.to(device).double())
         logits = self.classifier(outputs)
-        prob = F.sigmoid(logits)
+        prob = torch.sigmoid(logits)
         if labels is not None:
             labels = labels.float()
             loss = torch.log(prob[:, 0] + 1e-10) * labels + torch.log((1 - prob)[:, 0] + 1e-10) * (1 - labels)

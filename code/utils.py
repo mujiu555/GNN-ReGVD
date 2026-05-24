@@ -1,10 +1,7 @@
 import numpy as np
 import pickle as pkl
 import scipy.sparse as sp
-from scipy.sparse.linalg.eigen.arpack import eigsh
-import sys
-import random
-import re
+from scipy.sparse.linalg import eigsh
 import re
 from io import StringIO
 import tokenize
@@ -23,7 +20,7 @@ def sample_mask(idx, l):
     """Create mask."""
     mask = np.zeros(l)
     mask[idx] = 1
-    return np.array(mask, dtype=np.bool)
+    return np.array(mask, dtype=bool)
 
 
 def load_data(dataset_str, format="uni"):
@@ -50,10 +47,7 @@ def load_data(dataset_str, format="uni"):
     objects = []
     for i in range(len(names)):
         with open("data/ind.{}.{}".format(dataset_str, names[i]), 'rb') as f:
-            if sys.version_info > (3, 0):
-                objects.append(pkl.load(f, encoding='latin1'))
-            else:
-                objects.append(pkl.load(f))
+            objects.append(pkl.load(f, encoding='latin1'))
 
     x_adj, x_embed, y, tx_adj, tx_embed, ty, vx_adj, vx_embed, vy = tuple(objects)
     # train_idx_ori = parse_index_file("data/{}.train.index".format(dataset_str))
