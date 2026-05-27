@@ -39,6 +39,12 @@ from transformers import (get_linear_schedule_with_warmup,
                           RobertaConfig, RobertaForSequenceClassification, RobertaTokenizer,
                           DistilBertConfig, DistilBertForMaskedLM, DistilBertTokenizer)
 
+try:
+    from config import load_config
+    _HAS_CONFIG = True
+except ImportError:
+    _HAS_CONFIG = False
+
 logger = logging.getLogger(__name__)
 
 MODEL_CLASSES = {
@@ -562,7 +568,19 @@ def main():
                         help="using attention operation for attention: mul, sum, concat")
     parser.add_argument("--training_percent", default=1., type=float, help="percet of training sample")
     parser.add_argument("--alpha_weight", default=1., type=float, help="percet of training sample")
+    parser.add_argument("--config", type=str, default=None, help="Path to YAML config file (CLI args override YAML values)")
 
+    # Load YAML config: first pass to detect --config, then set as defaults
+    if _HAS_CONFIG:
+        temp_args, _ = parser.parse_known_args()
+        if temp_args.config and os.path.exists(temp_args.config):
+            yaml_config = load_config(temp_args.config)
+            for k, v in yaml_config.items():
+                if k != "config":
+                    actions = parser._option_string_actions
+                    arg_key = f"--{k}"
+                    if arg_key in actions:
+                        actions[arg_key].default = v
 
     args = parser.parse_args()
 

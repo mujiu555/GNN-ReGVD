@@ -25,10 +25,27 @@ python run.py --output_dir=./saved_models/regcn_l2_hs128_uni_ws5_lr5e4 --model_t
 	--seed 123456 2>&1 | tee $logp/training_log.txt
 ```
 
+#### YAML Config (recommended)
+```shell
+python run.py --config ../configs/default.yaml --do_train --do_eval --do_test
+```
+CLI arguments override YAML values.
+
+#### Fast Hyperparameter Tuning (Optuna-based, similar to Unsloth in LLMxCPG)
+```shell
+pip install optuna pyyaml
+python tune.py --n_trials 30 --subset 0.3 --epoch 10 --output_dir ./tuning_results
+# After tuning, use the best config:
+python run.py --config ./tuning_results/best_config.yaml --do_train --do_test
+```
+
+Uses MedianPruner for early stopping and subset training for fast iteration.
+
 #### Requirements
-- Python 	3.7
+- Python 	3.7+
 - Pytorch 	1.9
 - Transformer 	4.4
+- optuna, pyyaml (for tuning)
 
 ## Cite  
 Please cite the paper whenever our ReGVD is used to produce published results or incorporated into other software:

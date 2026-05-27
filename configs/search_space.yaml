@@ -1,0 +1,53 @@
+# Optuna search space for fast hyperparameter tuning
+# Usage: python tune.py --search_space configs/search_space.yaml --n_trials 50 --subset 0.3
+
+search_space:
+  learning_rate:
+    low: 0.000001
+    high: 0.001
+    log: true
+
+  weight_decay:
+    low: 0.0
+    high: 0.1
+
+  hidden_size:
+    choices: [128, 256, 384, 512]
+
+  num_GNN_layers:
+    low: 1
+    high: 4
+    step: 1
+
+  window_size:
+    low: 2
+    high: 10
+    step: 1
+
+  dropout:
+    low: 0.0
+    high: 0.5
+
+  gradient_accumulation_steps:
+    choices: [1, 2, 4]
+
+  train_batch_size:
+    choices: [8, 16, 32]
+
+  gnn:
+    choices: [ReGCN, ReGGNN]
+
+  att_op:
+    choices: [mul, sum, concat]
+
+  format:
+    choices: [uni, idx]
+
+  max_grad_norm:
+    low: 0.5
+    high: 3.0
+
+  adam_epsilon:
+    low: 1e-9
+    high: 1e-6
+    log: true
