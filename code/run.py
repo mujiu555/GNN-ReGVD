@@ -216,6 +216,7 @@ def train(args, train_dataset, model, tokenizer):
     tr_loss, logging_loss,avg_loss,tr_nb,tr_num,train_loss = 0.0, 0.0,0.0,0,0,0
     best_mrr=0.0
     best_acc=0.0
+    best_pair_acc=0.0
     # model.resize_token_embeddings(len(tokenizer))
     model.zero_grad()
 
@@ -273,19 +274,34 @@ def train(args, train_dataset, model, tokenizer):
                         for key, value in results.items():
                             logger.info("  %s = %s", key, round(value,4))                    
                         # Save model checkpoint
-                        
+
                     if results['eval_acc']>best_acc:
                         best_acc=results['eval_acc']
-                        logger.info("  "+"*"*20)  
+                        logger.info("  "+"*"*20)
                         logger.info("  Best acc:%s",round(best_acc,4))
-                        logger.info("  "+"*"*20)                          
-                        
+                        logger.info("  "+"*"*20)
+
                         checkpoint_prefix = 'checkpoint-best-acc'
-                        output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))                        
+                        output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))
                         if not os.path.exists(output_dir):
-                            os.makedirs(output_dir)                        
+                            os.makedirs(output_dir)
                         model_to_save = model.module if hasattr(model,'module') else model
-                        output_dir = os.path.join(output_dir, '{}'.format('model.bin')) 
+                        output_dir = os.path.join(output_dir, '{}'.format('model.bin'))
+                        torch.save(model_to_save.state_dict(), output_dir)
+                        logger.info("Saving model checkpoint to %s", output_dir)
+
+                    if 'eval_pair_acc' in results and results['eval_pair_acc'] > best_pair_acc:
+                        best_pair_acc = results['eval_pair_acc']
+                        logger.info("  "+"*"*20)
+                        logger.info("  Best pair acc:%s", round(best_pair_acc, 4))
+                        logger.info("  "+"*"*20)
+
+                        checkpoint_prefix = 'checkpoint-best-pair-acc'
+                        output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))
+                        if not os.path.exists(output_dir):
+                            os.makedirs(output_dir)
+                        model_to_save = model.module if hasattr(model,'module') else model
+                        output_dir = os.path.join(output_dir, '{}'.format('model.bin'))
                         torch.save(model_to_save.state_dict(), output_dir)
                         logger.info("Saving model checkpoint to %s", output_dir)
         avg_loss = round(train_loss / tr_num, 5)
@@ -332,13 +348,33 @@ def evaluate(args, model, tokenizer,eval_when_training=False):
     labels=np.concatenate(labels,0)
     preds=logits[:,0]>0.5
     eval_acc=np.mean(labels==preds)
+
+    # Pair accuracy: samples sharing the same idx form a pair (fixed version + CVE version).
+    # A pair is correct only if BOTH samples are predicted correctly.
+    from collections import defaultdict
+    idxs = [int(example.idx) for example in eval_dataset.examples]
+    pairs = defaultdict(list)
+    for idx, label, pred in zip(idxs, labels, preds):
+        pairs[idx].append((int(label), bool(pred)))
+
+    pair_correct = 0
+    pair_total = 0
+    for idx, samples in pairs.items():
+        if len(samples) == 2:
+            pair_total += 1
+            if all(lbl == prd for lbl, prd in samples):
+                pair_correct += 1
+
+    pair_acc = round(pair_correct / pair_total, 4) if pair_total > 0 else None
     eval_loss = eval_loss / nb_eval_steps
     perplexity = torch.tensor(eval_loss)
-            
+
     result = {
         "eval_loss": float(perplexity),
-        "eval_acc":round(eval_acc,4),
+        "eval_acc": round(eval_acc, 4),
     }
+    if pair_acc is not None:
+        result["eval_pair_acc"] = pair_acc
     return result
 
 def test(args, model, tokenizer):
@@ -378,6 +414,24 @@ def test(args, model, tokenizer):
     preds = probs > 0.5
 
     test_acc=np.mean(labels==preds)
+
+    # Pair accuracy: samples sharing the same idx form a pair (fixed version + CVE version).
+    # A pair is correct only if BOTH samples are predicted correctly.
+    from collections import defaultdict
+    idxs = [int(example.idx) for example in eval_dataset.examples]
+    pairs = defaultdict(list)
+    for idx, label, pred in zip(idxs, labels, preds):
+        pairs[idx].append((int(label), bool(pred)))
+
+    pair_correct = 0
+    pair_total = 0
+    for idx, samples in pairs.items():
+        if len(samples) == 2:
+            pair_total += 1
+            if all(lbl == prd for lbl, prd in samples):
+                pair_correct += 1
+
+    test_pair_acc = round(pair_correct / pair_total, 4) if pair_total > 0 else None
 
     # --- Per-sample logging ---
     log_path = os.path.join(args.output_dir, "sample_log.json")
@@ -436,9 +490,17 @@ def test(args, model, tokenizer):
     logger.info("")
     logger.info("  SUMMARY: %d / %d correct (%.4f)", total_correct, total,
                 total_correct / total if total > 0 else 0)
+    if test_pair_acc is not None:
+        logger.info("  PAIR ACC: %.4f (%d / %d pairs correct)", test_pair_acc, pair_correct, pair_total)
     logger.info("=" * 80)
 
     # Save to JSON file
+    if test_pair_acc is not None:
+        sample_records.append({
+            "pair_acc": test_pair_acc,
+            "pair_correct": pair_correct,
+            "pair_total": pair_total,
+        })
     with open(log_path, 'w') as f:
         json.dump(sample_records, f, indent=2)
     logger.info("  Detailed sample log saved to: %s", log_path)
@@ -453,6 +515,8 @@ def test(args, model, tokenizer):
     result = {
         "test_acc": round(test_acc, 4),
     }
+    if test_pair_acc is not None:
+        result["test_pair_acc"] = test_pair_acc
     return result
                         
 def main():
