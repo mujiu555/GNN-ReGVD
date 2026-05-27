@@ -59,31 +59,58 @@ class InputFeatures(object):
                  input_ids,
                  idx,
                  label,
+                 raw_js=None,
 
     ):
         self.input_tokens = input_tokens
         self.input_ids = input_ids
         self.idx=str(idx)
         self.label=label
+        self.raw_js=raw_js or {}
 
         
 def convert_examples_to_features(js,tokenizer,args):
-    #source
-    code=' '.join(js['func'].split())
+    # detect format: detect.json uses 'input'/'output', standard uses 'func'/'target'
+    if 'input' in js and 'output' in js:
+        # detect.json format
+        code = ' '.join(js['input'].split())
+        target = 1 if js['output'] == 'VULNERABLE' else 0
+    else:
+        # standard format
+        code = ' '.join(js['func'].split())
+        target = js['target']
+
     code_tokens=tokenizer.tokenize(code)[:args.block_size-2]
     source_tokens =[tokenizer.cls_token]+code_tokens+[tokenizer.sep_token]
     source_ids =  tokenizer.convert_tokens_to_ids(source_tokens)
     padding_length = args.block_size - len(source_ids)
     source_ids+=[tokenizer.pad_token_id]*padding_length
-    return InputFeatures(source_tokens,source_ids,js['idx'],js['target'])
+    return InputFeatures(source_tokens,source_ids,js['idx'],target,raw_js=js)
 
 class TextDataset(Dataset):
     def __init__(self, tokenizer, args, file_path=None, sample_percent=1.):
         self.examples = []
         with open(file_path) as f:
-            for line in f:
-                js=json.loads(line.strip())
-                self.examples.append(convert_examples_to_features(js, tokenizer, args))
+            first_char = f.read(1)
+            f.seek(0)
+            if first_char == '[':
+                # JSON array format (e.g. detect.json)
+                logger.info("*** Detected JSON array format: %s ***", file_path)
+                data = json.load(f)
+                for js in data:
+                    self.examples.append(convert_examples_to_features(js, tokenizer, args))
+                # Log format info from first sample
+                if self.examples:
+                    first = data[0]
+                    if 'input' in first and 'output' in first:
+                        logger.info("*** Detected detect.json data format (input/output fields) ***")
+                    else:
+                        logger.info("*** Detected standard data format (func/target fields) ***")
+            else:
+                # JSONL format (one JSON object per line)
+                for line in f:
+                    js = json.loads(line.strip())
+                    self.examples.append(convert_examples_to_features(js, tokenizer, args))
 
         total_len = len(self.examples)
         num_keep = int(sample_percent * total_len)
@@ -328,12 +355,11 @@ def test(args, model, tokenizer):
     eval_loss = 0.0
     nb_eval_steps = 0
     model.eval()
-    logits=[]   
+    logits=[]
     labels=[]
-    # for batch in tqdm(eval_dataloader,total=len(eval_dataloader)):
     for batch in eval_dataloader:
         inputs = batch[0].to(args.device)
-        label=batch[1].to(args.device) 
+        label=batch[1].to(args.device)
         with torch.no_grad():
             logit = model(inputs)
             logits.append(logit.cpu().numpy())
@@ -341,9 +367,75 @@ def test(args, model, tokenizer):
 
     logits=np.concatenate(logits,0)
     labels=np.concatenate(labels,0)
-    preds=logits[:,0]>0.5
+    probs = logits[:, 0]
+    preds = probs > 0.5
 
     test_acc=np.mean(labels==preds)
+
+    # --- Per-sample logging ---
+    log_path = os.path.join(args.output_dir, "sample_log.json")
+    sample_records = []
+    logger.info("")
+    logger.info("=" * 80)
+    logger.info("  PER-SAMPLE PREDICTION LOG")
+    logger.info("=" * 80)
+
+    for i, (example, prob, pred, label) in enumerate(zip(eval_dataset.examples, probs, preds, labels)):
+        raw = example.raw_js
+        pred_class = 1 if pred else 0
+        label_class = int(label)
+        correct = (pred_class == label_class)
+
+        # Print to logger
+        logger.info("--- Sample %d ---", i + 1)
+        logger.info("  idx       : %s", example.idx)
+        logger.info("  file_name : %s", raw.get('file_name', 'N/A'))
+        logger.info("  dataset   : %s", raw.get('dataset', 'N/A'))
+        logger.info("  cwe       : %s", raw.get('cwe', 'N/A'))
+        logger.info("  label     : %d (%s)", label_class,
+                    "VULNERABLE" if label_class == 1 else "BENIGN")
+        logger.info("  pred      : %d (%s)", pred_class,
+                    "VULNERABLE" if pred_class == 1 else "BENIGN")
+        logger.info("  prob      : %.6f", prob)
+        logger.info("  correct   : %s", "YES" if correct else "NO")
+
+        # Show code snippet (first 300 chars)
+        code_snippet = raw.get('input', raw.get('func', ''))
+        if len(code_snippet) > 300:
+            code_snippet = code_snippet[:300] + "..."
+        logger.info("  code      : %s", code_snippet[:200])
+
+        # Build record for JSON output
+        record = {
+            "idx": example.idx,
+            "file_name": raw.get('file_name', ''),
+            "dataset": raw.get('dataset', ''),
+            "cwe": raw.get('cwe', ''),
+            "instruction": raw.get('instruction', ''),
+            "label": label_class,
+            "label_name": "VULNERABLE" if label_class == 1 else "BENIGN",
+            "output_expected": raw.get('output', ''),
+            "prediction": pred_class,
+            "prediction_name": "VULNERABLE" if pred_class == 1 else "BENIGN",
+            "probability": float(prob),
+            "correct": correct,
+            "code": raw.get('input', raw.get('func', '')),
+        }
+        sample_records.append(record)
+
+    # Summary
+    total_correct = sum(1 for r in sample_records if r["correct"])
+    total = len(sample_records)
+    logger.info("")
+    logger.info("  SUMMARY: %d / %d correct (%.4f)", total_correct, total,
+                total_correct / total if total > 0 else 0)
+    logger.info("=" * 80)
+
+    # Save to JSON file
+    with open(log_path, 'w') as f:
+        json.dump(sample_records, f, indent=2)
+    logger.info("  Detailed sample log saved to: %s", log_path)
+
     with open(os.path.join(args.output_dir,"predictions.txt"),'w') as f:
         for example,pred in zip(eval_dataset.examples,preds):
             if pred:
