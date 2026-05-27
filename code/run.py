@@ -211,14 +211,15 @@ def train(args, train_dataset, model, tokenizer):
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", args.max_steps)
     
-    global_step = args.start_step
+    global_step = getattr(args, 'start_step', 0)
+    start_epoch = getattr(args, 'start_epoch', 0)
     tr_loss, logging_loss,avg_loss,tr_nb,tr_num,train_loss = 0.0, 0.0,0.0,0,0,0
     best_mrr=0.0
     best_acc=0.0
     # model.resize_token_embeddings(len(tokenizer))
     model.zero_grad()
- 
-    for idx in range(args.start_epoch, int(args.num_train_epochs)): 
+
+    for idx in range(start_epoch, int(args.num_train_epochs)): 
         # bar = tqdm(train_dataloader,total=len(train_dataloader))
         tr_num=0
         train_loss=0
